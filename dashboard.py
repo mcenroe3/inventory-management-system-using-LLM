@@ -3,17 +3,40 @@ import pandas as pd
 import mysql.connector
 from mysql.connector import Error
 
+# we import ChatGroq class where our api key and model is store
+from langchain_groq import ChatGroq
+
+llm = ChatGroq(
+    temperature=0,
+    groq_api_key = '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',    
+    model="llama-3.1-70b-versatile",
+)
+
+# used to test our model
+response=llm.invoke("how to store data in .dat file python")
+print(response.content)
+
 def connect_to_database():
     try:
         connection = mysql.connector.connect(
             host="localhost",
             user="root",
-            password="",
+            password="password",
             database="inventory_db"
         )
         return connection
     except Error as e:
         st.error(f"Error connecting to MySQL: {e}")
+        return None
+from pymongo import MongoClient
+
+def connect_to_mongodb():
+    try:
+        client = MongoClient("mongodb+srv://mcenroeryan23:yfCPEu6baJt0syJZ@mymongocluster.vzfgh.mongodb.net/")
+        db = client["inventory_db"] 
+        return db
+    except Exception as e:
+        st.error(f"Error connecting to MongoDB: {e}")
         return None
 
 def fetch_table_data(connection, query):
@@ -39,10 +62,12 @@ def execute_query(connection, query, params=None):
 def add_order(connection):
     st.header("Add Order")
 
+    # Input fields for Order
     supplier_id = st.number_input("Supplier ID", min_value=1, step=1)
     order_date = st.date_input("Order Date")
     status = st.selectbox("Order Status", ["Pending", "Shipped", "Delivered"])
 
+    # Input fields for Order Items
     st.subheader("Order Items")
     product_id = st.number_input("Product ID", min_value=1, step=1)
     quantity = st.number_input("Quantity", min_value=1, step=1)
@@ -50,12 +75,14 @@ def add_order(connection):
 
     if st.button("Add Order"):
         try:
+            # Start a transaction
+            cursor = connection.cursor()
+
             # Insert into Order table
             query_order = """
                 INSERT INTO `Order` (SupplierID, OrderDate, Status)
                 VALUES (%s, %s, %s)
             """
-            cursor = connection.cursor()
             cursor.execute(query_order, (supplier_id, order_date, status))
             order_id = cursor.lastrowid  # Get the last inserted OrderID
 
@@ -66,15 +93,28 @@ def add_order(connection):
             """
             cursor.execute(query_order_item, (order_id, product_id, quantity, price))
 
+            # Update inventory
+            query_update_inventory = """
+                UPDATE Inventory
+                SET Quantity = Quantity - %s
+                WHERE ProductID = %s
+            """
+            cursor.execute(query_update_inventory, (quantity, product_id))
+
+            # Commit the transaction
             connection.commit()
-            st.success(f"Order {order_id} added successfully!")
+            st.success(f"Order {order_id} added successfully and inventory updated!")
         except Error as e:
+            # Rollback in case of an error
             connection.rollback()
-            st.error(f"Error adding order: {e}")
+            st.error(f"Error adding order or updating inventory: {e}")
+
+from bson import Decimal128
+from datetime import datetime, date
+from decimal import Decimal  
 
 
-# Delete Order
-def delete_order(connection):
+def delete_order(connection, mongodb):
     st.header("Delete Order")
 
     # Input field for Order ID
@@ -82,20 +122,79 @@ def delete_order(connection):
 
     if st.button("Delete Order"):
         try:
-            # Delete from OrderItem table
-            query_order_item = "DELETE FROM OrderItem WHERE OrderID = %s"
-            cursor = connection.cursor()
-            cursor.execute(query_order_item, (order_id,))
+            # Fetch order details before deletion
+            query_order = "SELECT * FROM `Order` WHERE OrderID = %s"
+            order_data = fetch_table_data(connection, query_order % order_id)
 
-            # Delete from Order table
-            query_order = "DELETE FROM `Order` WHERE OrderID = %s"
-            cursor.execute(query_order, (order_id,))
+            if not order_data.empty:
+                # Fetch associated order items
+                query_order_items = "SELECT * FROM `OrderItem` WHERE OrderID = %s"
+                order_items_data = fetch_table_data(connection, query_order_items % order_id)
 
-            connection.commit()
-            st.success(f"Order {order_id} deleted successfully!")
+                # Fetch associated shipment details
+                query_shipment = "SELECT * FROM `Shipment` WHERE OrderID = %s"
+                shipment_data = fetch_table_data(connection, query_shipment % order_id)
+
+                # Function to convert incompatible types (datetime.date, decimal.Decimal)
+                def convert_types(record):
+                    for key, value in record.items():
+                        if isinstance(value, date):  # Convert date to datetime
+                            record[key] = datetime.combine(value, datetime.min.time())
+                        elif isinstance(value, Decimal):  # Convert Decimal to float
+                            record[key] = float(value)
+                    return record
+
+                # Prepare data for MongoDB
+                order_data_dict = order_data.to_dict("records")
+                order_items_data_dict = order_items_data.to_dict("records")
+                shipment_data_dict = shipment_data.to_dict("records")
+                converted_order = [convert_types(record) for record in order_data_dict]
+                converted_items = [convert_types(record) for record in order_items_data_dict]
+                converted_shipments = [convert_types(record) for record in shipment_data_dict]
+
+                # Insert the deleted order, items, and shipments into MongoDB
+                order_history = {
+                    "Order": converted_order,
+                    "OrderItems": converted_items,
+                    "Shipments": converted_shipments,
+                    "DeletedAt": datetime.now().isoformat()
+                }
+                mongodb["deleted_order"].insert_one(order_history)
+
+                # Delete associated rows from Shipment table
+                delete_shipment_query = "DELETE FROM `Shipment` WHERE OrderID = %s"
+                cursor = connection.cursor()
+                cursor.execute(delete_shipment_query, (order_id,))
+
+                # Verify rows are deleted from Shipment
+                cursor.execute("SELECT COUNT(*) FROM `Shipment` WHERE OrderID = %s", (order_id,))
+                remaining_shipments = cursor.fetchone()[0]
+                if remaining_shipments > 0:
+                    raise Exception("Failed to delete associated rows from `Shipment`.")
+
+                # Delete associated rows from OrderItem table
+                delete_order_items_query = "DELETE FROM `OrderItem` WHERE OrderID = %s"
+                cursor.execute(delete_order_items_query, (order_id,))
+
+                # Verify rows are deleted from OrderItem
+                cursor.execute("SELECT COUNT(*) FROM `OrderItem` WHERE OrderID = %s", (order_id,))
+                remaining_items = cursor.fetchone()[0]
+                if remaining_items > 0:
+                    raise Exception("Failed to delete associated rows from `OrderItem`.")
+
+                # Delete the order from the Order table
+                delete_order_query = "DELETE FROM `Order` WHERE OrderID = %s"
+                cursor.execute(delete_order_query, (order_id,))
+                connection.commit()
+
+                st.success(f"Order {order_id} and its associated items and shipments were deleted successfully and recorded in MongoDB.")
+            else:
+                st.warning(f"Order ID {order_id} not found.")
         except Error as e:
             connection.rollback()
-            st.error(f"Error deleting order: {e}")
+            st.error(f"Error deleting order from MySQL: {e}")
+        except Exception as e:
+            st.error(f"Error interacting with MongoDB or cleaning up dependencies: {e}")
 
 
 # Track Order
@@ -128,16 +227,22 @@ def track_order(connection):
         except Error as e:
             st.error(f"Error fetching shipment details: {e}")
 
-# Modify Order
 def modify_order(connection):
     st.header("Modify Order")
+
+    # Initialize session state for order details if not set
+    if "order_details" not in st.session_state:
+        st.session_state["order_details"] = None
+    if "order_items" not in st.session_state:
+        st.session_state["order_items"] = None
 
     # Input to select Order ID
     order_id = st.number_input("Enter Order ID to Modify", min_value=1, step=1)
 
+    # Fetch Order Details
     if st.button("Fetch Order Details"):
         try:
-            # Fetch Order Details
+            # Fetch order details from the database
             query_order = """
                 SELECT OrderID, SupplierID, OrderDate, Status
                 FROM `Order`
@@ -145,13 +250,8 @@ def modify_order(connection):
             """
             order_data = fetch_table_data(connection, query_order % order_id)
 
-            if not order_data.empty:
-                order_details = order_data.iloc[0]
-                st.write("**Order Details:**")
-                supplier_id = st.number_input("Supplier ID", value=order_details["SupplierID"], step=1)
-                order_date = st.date_input("Order Date", value=pd.to_datetime(order_details["OrderDate"]))
-                status = st.selectbox("Order Status", ["Pending", "Shipped", "Delivered"], 
-                                      index=["Pending", "Shipped", "Delivered"].index(order_details["Status"]))
+            if not order_data.empty:  # Check if DataFrame is not empty
+                st.session_state["order_details"] = order_data.iloc[0]
 
                 # Fetch associated Order Items
                 query_items = """
@@ -160,49 +260,101 @@ def modify_order(connection):
                     WHERE OrderID = %s
                 """
                 items_data = fetch_table_data(connection, query_items % order_id)
-                st.write("**Order Items:**")
-
-                # Display and update each item dynamically
-                if not items_data.empty:
-                    updated_items = []
-                    for _, item in items_data.iterrows():
-                        st.write(f"Item ID: {item['OrderItemID']}")
-                        product_id = st.number_input(f"Product ID (Item {item['OrderItemID']})", value=item["ProductID"], step=1, key=f"prod_{item['OrderItemID']}")
-                        quantity = st.number_input(f"Quantity (Item {item['OrderItemID']})", value=item["Quantity"], step=1, key=f"qty_{item['OrderItemID']}")
-                        price = st.number_input(f"Price (Item {item['OrderItemID']})", value=float(item["Price"]), step=0.01, key=f"price_{item['OrderItemID']}")
-
-                        updated_items.append({"OrderItemID": item["OrderItemID"], "ProductID": product_id, "Quantity": quantity, "Price": price})
-
-                    # Update Order Items Button
-                    if st.button("Update Order Items"):
-                        try:
-                            for item in updated_items:
-                                query_update_item = """
-                                    UPDATE OrderItem
-                                    SET ProductID = %s, Quantity = %s, Price = %s
-                                    WHERE OrderItemID = %s
-                                """
-                                execute_query(connection, query_update_item, (item["ProductID"], item["Quantity"], item["Price"], item["OrderItemID"]))
-                            st.success("Order items updated successfully!")
-                        except Error as e:
-                            st.error(f"Error updating order items: {e}")
-
-                # Update Order Details Button
-                if st.button("Update Order Details"):
-                    try:
-                        query_update_order = """
-                            UPDATE `Order`
-                            SET SupplierID = %s, OrderDate = %s, Status = %s
-                            WHERE OrderID = %s
-                        """
-                        execute_query(connection, query_update_order, (supplier_id, order_date, status, order_id))
-                        st.success("Order details updated successfully!")
-                    except Error as e:
-                        st.error(f"Error updating order details: {e}")
+                st.session_state["order_items"] = items_data
             else:
                 st.warning("Order ID not found.")
         except Error as e:
             st.error(f"Error fetching order details: {e}")
+
+    # Display and Update Order Details
+    if st.session_state["order_details"] is not None:
+        order_details = st.session_state["order_details"]
+        st.write("**Order Details:**")
+        
+        supplier_id = st.number_input(
+            "Supplier ID", value=order_details["SupplierID"], step=1, key="supplier_id"
+        )
+        order_date = st.date_input(
+            "Order Date", value=pd.to_datetime(order_details["OrderDate"]), key="order_date"
+        )
+        status = st.selectbox(
+            "Order Status",
+            ["Pending", "Shipped", "Delivered"],
+            index=["Pending", "Shipped", "Delivered"].index(order_details["Status"]),
+            key="order_status",
+        )
+
+        # Display and Update Order Items
+        if st.session_state["order_items"] is not None and not st.session_state["order_items"].empty:
+            items_data = st.session_state["order_items"]
+            st.write("**Order Items:**")
+            updated_items = []
+
+            for _, item in items_data.iterrows():
+                st.write(f"Item ID: {item['OrderItemID']}")
+                product_id = st.number_input(
+                    f"Product ID (Item {item['OrderItemID']})",
+                    value=item["ProductID"],
+                    step=1,
+                    key=f"prod_{item['OrderItemID']}",
+                )
+                quantity = st.number_input(
+                    f"Quantity (Item {item['OrderItemID']})",
+                    value=item["Quantity"],
+                    step=1,
+                    key=f"qty_{item['OrderItemID']}",
+                )
+                price = st.number_input(
+                    f"Price (Item {item['OrderItemID']})",
+                    value=float(item["Price"]),
+                    step=0.01,
+                    key=f"price_{item['OrderItemID']}",
+                )
+
+                updated_items.append(
+                    {
+                        "OrderItemID": item["OrderItemID"],
+                        "ProductID": product_id,
+                        "Quantity": quantity,
+                        "Price": price,
+                    }
+                )
+
+            # Update Order Items Button
+            if st.button("Update Order Items"):
+                try:
+                    for item in updated_items:
+                        query_update_item = """
+                            UPDATE OrderItem
+                            SET ProductID = %s, Quantity = %s, Price = %s
+                            WHERE OrderItemID = %s
+                        """
+                        execute_query(
+                            connection,
+                            query_update_item,
+                            (item["ProductID"], item["Quantity"], item["Price"], item["OrderItemID"]),
+                        )
+                    st.success("Order items updated successfully!")
+                except Error as e:
+                    st.error(f"Error updating order items: {e}")
+
+        # Update Order Details Button
+        if st.button("Update Order Details"):
+            try:
+                query_update_order = """
+                    UPDATE `Order`
+                    SET SupplierID = %s, OrderDate = %s, Status = %s
+                    WHERE OrderID = %s
+                """
+                execute_query(
+                    connection,
+                    query_update_order,
+                    (supplier_id, order_date, status, order_id),
+                )
+                st.success("Order details updated successfully!")
+            except Error as e:
+                st.error(f"Error updating order details: {e}")
+
 
 # Supplier Details
 def supplier_details(connection):
@@ -225,7 +377,6 @@ def supplier_details(connection):
     """
     supplier_data = fetch_table_data(connection, query)
 
-    # Display the data
     if not supplier_data.empty:
         st.dataframe(supplier_data, use_container_width=True)
     else:
@@ -278,31 +429,6 @@ def delete_supplier(connection):
         else:
             st.error("Failed to delete supplier. Please check the Supplier ID.")
 
-def modify_supplier(connection):
-    st.header("Modify Supplier")
-
-    supplier_id = st.number_input("Enter Supplier ID to Modify", min_value=1, step=1)
-
-    if st.button("Fetch Supplier Details"):
-        query = "SELECT SupplierName, ContactInfo FROM Supplier WHERE SupplierID = %s"
-        supplier_data = fetch_table_data(connection, query % supplier_id)
-
-        if not supplier_data.empty:
-            supplier_details = supplier_data.iloc[0]
-
-            supplier_name = st.text_input("Supplier Name", value=supplier_details["SupplierName"])
-            contact_info = st.text_input("Contact Information", value=supplier_details["ContactInfo"])
-
-            if st.button("Update Supplier"):
-                query = """
-                    UPDATE Supplier
-                    SET SupplierName = %s, ContactInfo = %s
-                    WHERE SupplierID = %s
-                """
-                if execute_query(connection, query, (supplier_name, contact_info, supplier_id)):
-                    st.success("Supplier details updated successfully!")
-        else:
-            st.warning("Supplier ID not found.")
 def customer_insights(connection):
     st.header("Customer Purchase Insights")
     query = """
@@ -342,38 +468,11 @@ def supplier_performance_dashboard(connection):
     else:
         st.info("No supplier data available.")
 
-# def low_stock_alerts(connection):
-#     st.header("Low Stock Alerts")
-
-#     query = """
-#         SELECT 
-#             Product.ProductName, 
-#             Inventory.Quantity AS StockQuantity, 
-#             Product.ReorderLevel,
-#             (Product.ReorderLevel - Inventory.Quantity) AS QuantityToReorder
-#         FROM Inventory
-#         JOIN Product ON Inventory.ProductID = Product.ProductID
-#         WHERE Inventory.Quantity < Product.ReorderLevel
-#     """
-#     low_stock_data = fetch_table_data(connection, query)
-
-#     if not low_stock_data.empty:
-#         # Convert relevant columns to appropriate types
-#         low_stock_data["StockQuantity"] = pd.to_numeric(low_stock_data["StockQuantity"], errors="coerce")
-#         low_stock_data["ReorderLevel"] = pd.to_numeric(low_stock_data["ReorderLevel"], errors="coerce")
-#         low_stock_data["QuantityToReorder"] = pd.to_numeric(low_stock_data["QuantityToReorder"], errors="coerce")
-        
-#         # Display the DataFrame
-#         st.dataframe(low_stock_data, use_container_width=True)
-#         st.write("These products are below the reorder level. Consider restocking.")
-#     else:
-#         st.info("No low stock alerts at the moment.")
-
 def customer_insights(connection):
     st.header("Customer Insights")
 
     # Tabs for different insights
-    tab1, tab2, tab3 = st.tabs(["Top Customers", "Repeat Purchase Rate", "Customer Segmentation"])
+    tab1, tab2 = st.tabs(["Top Customers","Customer Segmentation"])
 
     # Tab 1: Top Customers by Revenue
     with tab1:
@@ -397,34 +496,15 @@ def customer_insights(connection):
         else:
             st.info("No data available for top customers.")
 
-    # Tab 2: Repeat Purchase Rate
+    # Tab 2: Customer Segmentation
     with tab2:
-        st.subheader("Repeat Purchase Rate")
-        query = """
-            SELECT 
-                COUNT(DISTINCT Customer.CustomerID) AS UniqueCustomers,
-                COUNT(Sales.SalesID) AS TotalOrders,
-                ROUND(((COUNT(Sales.SalesID) - COUNT(DISTINCT Customer.CustomerID)) / COUNT(DISTINCT Customer.CustomerID)) * 100, 2) AS RepeatRate
-            FROM Customer
-            LEFT JOIN Sales ON Customer.CustomerID = Sales.CustomerID
-        """
-        repeat_rate_data = fetch_table_data(connection, query)
-
-        if not repeat_rate_data.empty:
-            repeat_rate = repeat_rate_data.iloc[0]["RepeatRate"]
-            st.metric(label="Repeat Purchase Rate", value=f"{repeat_rate:.2f}%")
-        else:
-            st.info("No data available for repeat purchase analysis.")
-
-    # Tab 3: Customer Segmentation
-    with tab3:
         st.subheader("Customer Segmentation")
         query = """
             SELECT 
                 Customer.CustomerName AS Customer,
                 COUNT(Sales.SalesID) AS TotalOrders,
                 CASE 
-                    WHEN COUNT(Sales.SalesID) > 5 THEN 'Regular'
+                    WHEN COUNT(Sales.SalesID) >= 5 THEN 'Regular'
                     ELSE 'Occasional'
                 END AS CustomerType
             FROM Customer
@@ -443,32 +523,22 @@ def customer_insights(connection):
         else:
             st.info("No data available for customer segmentation.")
 
-
-# Main app
 def main():
     st.title("Inventory Management System")
 
     # Connect to the database
     connection = connect_to_database()
+    mongodb_connection = connect_to_mongodb() 
 
-    if connection:
+    if connection is not None and mongodb_connection is not None:
         # Sidebar menu
         st.sidebar.title("Menu")
         main_menu = st.sidebar.selectbox(
-            "Select Main Menu", ["Dashboard","Inventory", "Orders", "Discounts", "Shipments", "Suppliers", "Customer Insights"]
+            "Select Main Menu", ["Inventory", "Orders", "Discounts", "Shipments", "Suppliers", "Customer Insights", "Insights"]
         )
-        # Dashboard menu
-        if main_menu == "Dashboard":
-            dashboard_tab = st.sidebar.radio(
-                "Dashboard Insights", 
-                ["Low Stock Alerts", "Supplier Performance"]
-            )
-            # if dashboard_tab == "Low Stock Alerts":
-            #     low_stock_alerts(connection)  # Add low stock alert logic if separate
-            if dashboard_tab == "Supplier Performance":
-                supplier_performance_dashboard(connection)
 
-        elif main_menu == "Inventory":
+        # Dashboard menu
+        if main_menu == "Inventory":
             st.header("Inventory")
             submenu = st.sidebar.radio("Options", ["View Inventory"])
 
@@ -498,7 +568,7 @@ def main():
                 add_order(connection)
 
             elif submenu == "Delete Order":
-                delete_order(connection)
+                delete_order(connection, mongodb_connection)
 
             elif submenu == "Check Stock Availability":
                 st.header("Check Stock Availability")
@@ -542,7 +612,6 @@ def main():
 
             elif submenu == "Modify Order":
                 modify_order(connection)
-
 
         elif main_menu == "Discounts":
             st.header("Discounts")
@@ -621,9 +690,16 @@ def main():
                             """
                             if execute_query(connection, update_query, (new_discount_percent, new_start_date, new_end_date, discount_id)):
                                 st.success("Discount updated successfully!")
+
+                                # Refresh the data after updating
+                                refreshed_data = fetch_table_data(connection, query)
+                                st.write("Updated Discounts:")
+                                if not refreshed_data.empty:
+                                    st.dataframe(refreshed_data, use_container_width=True)
+                                else:
+                                    st.info("No discounts available.")
                             else:
                                 st.error("Failed to update the discount.")
-
                     else:
                         st.warning("Discount ID not found. Please enter a valid Discount ID.")
 
@@ -679,7 +755,6 @@ def main():
                     LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
                     WHERE `Order`.Status = "%s"
                 """
-            
             # Fetch filtered data
             if status_filter == "All":
                 shipment_data = fetch_table_data(connection, query)
@@ -691,26 +766,30 @@ def main():
                 st.dataframe(shipment_data, use_container_width=True)
             else:
                 st.info("No shipments found for the selected status.")
-                
+
         elif main_menu == "Suppliers":
-                st.header("Supplier Management")
-                submenu = st.sidebar.radio("Options", ["View Suppliers", "Add Supplier", "Delete Supplier", "Modify Supplier"])
+            st.header("Supplier Management")
+            submenu = st.sidebar.radio("Options", ["View Suppliers", "Add Supplier", "Delete Supplier", "Modify Supplier"])
 
-                if submenu == "View Suppliers":
-                   get_supplier_details(connection)
+            if submenu == "View Suppliers":
+                get_supplier_details(connection)
 
-                elif submenu == "Add Supplier":
-                   add_supplier(connection)
+            elif submenu == "Add Supplier":
+                add_supplier(connection)
 
-                elif submenu == "Delete Supplier":
-                  delete_supplier(connection)
+            elif submenu == "Delete Supplier":
+                delete_supplier(connection)
 
-                elif submenu == "Modify Supplier":
-                  modify_supplier(connection)
-                  
         elif main_menu == "Customer Insights":
-                  customer_insights(connection)
+            customer_insights(connection)
 
+        elif main_menu == "Insights":
+            dashboard_tab = st.sidebar.radio(
+                "Dashboard Insights",
+                ["Supplier Performance"]
+            )
+            if dashboard_tab == "Supplier Performance":
+                supplier_performance_dashboard(connection)
 
         connection.close()
     else:
