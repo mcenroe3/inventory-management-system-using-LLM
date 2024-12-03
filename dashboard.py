@@ -2,19 +2,17 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 from mysql.connector import Error
-
-# we import ChatGroq class where our api key and model is store
 from langchain_groq import ChatGroq
 
-llm = ChatGroq(
-    temperature=0,
-    groq_api_key = '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',    
-    model="llama-3.1-70b-versatile",
-)
+# llm = ChatGroq(
+#     temperature=0,
+#     groq_api_key = '',    
+#     model="llama-3.1-70b-versatile",
+# )
 
-# used to test our model
-response=llm.invoke("how to store data in .dat file python")
-print(response.content)
+# # used to test our model
+# response=llm.invoke("how to store data in .dat file python")
+# print(response.content)
 
 def connect_to_database():
     try:
@@ -32,7 +30,7 @@ from pymongo import MongoClient
 
 def connect_to_mongodb():
     try:
-        client = MongoClient("mongodb+srv://mcenroeryan23:yfCPEu6baJt0syJZ@mymongocluster.vzfgh.mongodb.net/")
+        client = MongoClient("")
         db = client["inventory_db"] 
         return db
     except Exception as e:
@@ -523,6 +521,283 @@ def customer_insights(connection):
         else:
             st.info("No data available for customer segmentation.")
 
+# def main():
+#     st.title("Inventory Management System")
+
+#     # Connect to the database
+#     connection = connect_to_database()
+#     mongodb_connection = connect_to_mongodb() 
+
+#     if connection is not None and mongodb_connection is not None:
+#         # Sidebar menu
+#         st.sidebar.title("Menu")
+#         main_menu = st.sidebar.selectbox(
+#             "Select Main Menu", ["Inventory", "Orders", "Discounts", "Shipments", "Suppliers", "Customer Insights", "Insights"]
+#         )
+
+#         # Dashboard menu
+#         if main_menu == "Inventory":
+#             st.header("Inventory")
+#             submenu = st.sidebar.radio("Options", ["View Inventory"])
+
+#             if submenu == "View Inventory":
+#                 query = """
+#                     SELECT 
+#                         Product.ProductName, 
+#                         Inventory.Quantity, 
+#                         Location.LocationName, 
+#                         Location.Address, 
+#                         Inventory.LastRestockDate
+#                     FROM Inventory
+#                     LEFT JOIN Product ON Inventory.ProductID = Product.ProductID
+#                     LEFT JOIN Location ON Inventory.LocationID = Location.LocationID
+#                 """
+#                 inventory_data = fetch_table_data(connection, query)
+#                 if not inventory_data.empty:
+#                     st.dataframe(inventory_data, use_container_width=True)
+#                 else:
+#                     st.info("No inventory records found.")
+
+#         elif main_menu == "Orders":
+#             st.header("Orders")
+#             submenu = st.sidebar.radio("Options", ["Add Order", "Delete Order", "Check Stock Availability", "Track Order", "Modify Order"])
+
+#             if submenu == "Add Order":
+#                 add_order(connection)
+
+#             elif submenu == "Delete Order":
+#                 delete_order(connection, mongodb_connection)
+
+#             elif submenu == "Check Stock Availability":
+#                 st.header("Check Stock Availability")
+#                 product_id = st.number_input("Enter Product ID", min_value=1, step=1)
+#                 required_quantity = st.number_input("Enter Required Quantity", min_value=1, step=1)
+
+#                 if st.button("Check Availability"):
+#                     query = """
+#                         SELECT 
+#                             Product.ProductName, 
+#                             Inventory.Quantity AS AvailableStock, 
+#                             Location.LocationName, 
+#                             Location.Address
+#                         FROM Inventory
+#                         LEFT JOIN Product ON Inventory.ProductID = Product.ProductID
+#                         LEFT JOIN Location ON Inventory.LocationID = Location.LocationID
+#                         WHERE Inventory.ProductID = %s
+#                     """
+#                     cursor = connection.cursor(dictionary=True)
+#                     cursor.execute(query, (product_id,))
+#                     stock_data = cursor.fetchall()
+
+#                     if stock_data:
+#                         stock_df = pd.DataFrame(stock_data)
+#                         total_stock = stock_df['AvailableStock'].sum()
+#                         sufficient_stock = total_stock >= required_quantity
+
+#                         st.write("Stock Details:")
+#                         st.dataframe(stock_df)
+
+#                         st.write(f"Total Available Stock: **{total_stock}**")
+#                         if sufficient_stock:
+#                             st.success("Sufficient stock is available.")
+#                         else:
+#                             st.error("Insufficient stock.")
+#                     else:
+#                         st.warning("Product not found in inventory.")
+
+#             elif submenu == "Track Order":
+#                 track_order(connection)
+
+#             elif submenu == "Modify Order":
+#                 modify_order(connection)
+
+#         elif main_menu == "Discounts":
+#             st.header("Discounts")
+#             submenu = st.sidebar.radio("Options", ["View Discounts", "Modify Discount"])
+
+#             if submenu == "View Discounts":
+#                 query = """
+#                     SELECT 
+#                         Discount.DiscountID, 
+#                         Product.ProductName AS ProductName, 
+#                         Discount.DiscountPercent, 
+#                         Discount.StartDate, 
+#                         Discount.EndDate
+#                     FROM Discount
+#                     LEFT JOIN Product ON Discount.ProductID = Product.ProductID
+#                 """
+#                 discount_data = fetch_table_data(connection, query)
+#                 if not discount_data.empty:
+#                     st.dataframe(discount_data, use_container_width=True)
+#                 else:
+#                     st.info("No discounts available.")
+
+#             elif submenu == "Modify Discount":
+#                 st.header("Modify Discount")
+#                 query = """
+#                     SELECT 
+#                         Discount.DiscountID, 
+#                         Product.ProductName AS ProductName, 
+#                         Discount.DiscountPercent, 
+#                         Discount.StartDate, 
+#                         Discount.EndDate
+#                     FROM Discount
+#                     LEFT JOIN Product ON Discount.ProductID = Product.ProductID
+#                 """
+#                 discount_data = fetch_table_data(connection, query)
+
+#                 if discount_data.empty:
+#                     st.warning("No discounts found to modify.")
+#                 else:
+#                     st.write("Available Discounts:")
+#                     st.dataframe(discount_data)
+
+#                     discount_id = st.number_input("Enter Discount ID to Modify", min_value=1, step=1)
+
+#                     selected_discount = discount_data[discount_data["DiscountID"] == discount_id]
+
+#                     if not selected_discount.empty:
+#                         selected_discount = selected_discount.iloc[0]
+
+#                         st.write(f"**Selected Product:** {selected_discount['ProductName']}")
+#                         st.write(f"**Current Discount:** {selected_discount['DiscountPercent']}%")
+#                         st.write(f"**Start Date:** {selected_discount['StartDate']}")
+#                         st.write(f"**End Date:** {selected_discount['EndDate']}")
+
+#                         current_discount = float(selected_discount["DiscountPercent"])
+
+#                         new_discount_percent = st.number_input(
+#                             "New Discount Percent",
+#                             min_value=0.0,
+#                             max_value=100.0,
+#                             step=0.1,
+#                             value=current_discount,
+#                         )
+#                         new_start_date = st.date_input(
+#                             "New Start Date", value=pd.to_datetime(selected_discount["StartDate"])
+#                         )
+#                         new_end_date = st.date_input(
+#                             "New End Date", value=pd.to_datetime(selected_discount["EndDate"])
+#                         )
+
+#                         if st.button("Update Discount"):
+#                             update_query = """
+#                                 UPDATE Discount
+#                                 SET DiscountPercent = %s, StartDate = %s, EndDate = %s
+#                                 WHERE DiscountID = %s
+#                             """
+#                             if execute_query(connection, update_query, (new_discount_percent, new_start_date, new_end_date, discount_id)):
+#                                 st.success("Discount updated successfully!")
+
+#                                 # Refresh the data after updating
+#                                 refreshed_data = fetch_table_data(connection, query)
+#                                 st.write("Updated Discounts:")
+#                                 if not refreshed_data.empty:
+#                                     st.dataframe(refreshed_data, use_container_width=True)
+#                                 else:
+#                                     st.info("No discounts available.")
+#                             else:
+#                                 st.error("Failed to update the discount.")
+#                     else:
+#                         st.warning("Discount ID not found. Please enter a valid Discount ID.")
+
+#         elif main_menu == "Shipments":
+#             st.header("Shipments")
+
+#             status_filter = st.selectbox("Select Shipment Status", ["All", "Pending", "Shipped", "Delivered"])
+
+#             if status_filter == "All":
+#                 query = """
+#                     SELECT 
+#                         Shipment.ShipmentID, 
+#                         Shipment.ShipmentDate, 
+#                         Shipment.TrackingNumber, 
+#                         `Order`.OrderID, 
+#                         `Order`.Status
+#                     FROM Shipment
+#                     LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
+#                 """
+#             elif status_filter == "Pending":
+#                 query = """
+#                     SELECT 
+#                         Shipment.ShipmentID, 
+#                         Shipment.ShipmentDate, 
+#                         Shipment.TrackingNumber, 
+#                         `Order`.OrderID, 
+#                         `Order`.Status
+#                     FROM Shipment
+#                     LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
+#                     WHERE `Order`.Status = "%s"
+#                 """
+#             elif status_filter == "Shipped":
+#                 query = """
+#                     SELECT 
+#                         Shipment.ShipmentID, 
+#                         Shipment.ShipmentDate, 
+#                         Shipment.TrackingNumber, 
+#                         `Order`.OrderID, 
+#                         `Order`.Status
+#                     FROM Shipment
+#                     LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
+#                     WHERE `Order`.Status = "%s"
+#                 """
+#             elif status_filter == "Delivered":
+#                 query = """
+#                     SELECT 
+#                         Shipment.ShipmentID, 
+#                         Shipment.ShipmentDate, 
+#                         Shipment.TrackingNumber, 
+#                         `Order`.OrderID, 
+#                         `Order`.Status
+#                     FROM Shipment
+#                     LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
+#                     WHERE `Order`.Status = "%s"
+#                 """
+#             # Fetch filtered data
+#             if status_filter == "All":
+#                 shipment_data = fetch_table_data(connection, query)
+#             else:
+#                 shipment_data = fetch_table_data(connection, query % status_filter)
+
+#             # Display results
+#             if not shipment_data.empty:
+#                 st.dataframe(shipment_data, use_container_width=True)
+#             else:
+#                 st.info("No shipments found for the selected status.")
+
+#         elif main_menu == "Suppliers":
+#             st.header("Supplier Management")
+#             submenu = st.sidebar.radio("Options", ["View Suppliers", "Add Supplier", "Delete Supplier", "Modify Supplier"])
+
+#             if submenu == "View Suppliers":
+#                 get_supplier_details(connection)
+
+#             elif submenu == "Add Supplier":
+#                 add_supplier(connection)
+
+#             elif submenu == "Delete Supplier":
+#                 delete_supplier(connection)
+
+#         elif main_menu == "Customer Insights":
+#             customer_insights(connection)
+
+#         elif main_menu == "Insights":
+#             dashboard_tab = st.sidebar.radio(
+#                 "Dashboard Insights",
+#                 ["Supplier Performance"]
+#             )
+#             if dashboard_tab == "Supplier Performance":
+#                 supplier_performance_dashboard(connection)
+
+#         connection.close()
+#     else:
+#         st.error("Unable to connect to the database.")
+
+
+# if __name__ == "__main__":
+#     main()
+# from langchain_groq import ChatGroq
+
 def main():
     st.title("Inventory Management System")
 
@@ -536,6 +811,22 @@ def main():
         main_menu = st.sidebar.selectbox(
             "Select Main Menu", ["Inventory", "Orders", "Discounts", "Shipments", "Suppliers", "Customer Insights", "Insights"]
         )
+
+        # # Manual Query Assistant
+        # st.sidebar.header("Manual Query Assistant")
+        # user_prompt = st.sidebar.text_area("Enter your query prompt", placeholder="Type your query here...")
+
+        # if user_prompt:
+        #     try:
+        #         # Invoke the LLM
+        #         response = llm.invoke(user_prompt)
+        #         if response:
+        #             st.sidebar.success("Generated Query:")
+        #             st.sidebar.code(response.content, language="sql")
+        #         else:
+        #             st.sidebar.warning("No response received from the model. Please try again.")
+        #     except Exception as e:
+        #         st.sidebar.error(f"Error invoking the model: {e}")
 
         # Dashboard menu
         if main_menu == "Inventory":
@@ -702,71 +993,7 @@ def main():
                                 st.error("Failed to update the discount.")
                     else:
                         st.warning("Discount ID not found. Please enter a valid Discount ID.")
-
-        elif main_menu == "Shipments":
-            st.header("Shipments")
-
-            status_filter = st.selectbox("Select Shipment Status", ["All", "Pending", "Shipped", "Delivered"])
-
-            if status_filter == "All":
-                query = """
-                    SELECT 
-                        Shipment.ShipmentID, 
-                        Shipment.ShipmentDate, 
-                        Shipment.TrackingNumber, 
-                        `Order`.OrderID, 
-                        `Order`.Status
-                    FROM Shipment
-                    LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
-                """
-            elif status_filter == "Pending":
-                query = """
-                    SELECT 
-                        Shipment.ShipmentID, 
-                        Shipment.ShipmentDate, 
-                        Shipment.TrackingNumber, 
-                        `Order`.OrderID, 
-                        `Order`.Status
-                    FROM Shipment
-                    LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
-                    WHERE `Order`.Status = "%s"
-                """
-            elif status_filter == "Shipped":
-                query = """
-                    SELECT 
-                        Shipment.ShipmentID, 
-                        Shipment.ShipmentDate, 
-                        Shipment.TrackingNumber, 
-                        `Order`.OrderID, 
-                        `Order`.Status
-                    FROM Shipment
-                    LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
-                    WHERE `Order`.Status = "%s"
-                """
-            elif status_filter == "Delivered":
-                query = """
-                    SELECT 
-                        Shipment.ShipmentID, 
-                        Shipment.ShipmentDate, 
-                        Shipment.TrackingNumber, 
-                        `Order`.OrderID, 
-                        `Order`.Status
-                    FROM Shipment
-                    LEFT JOIN `Order` ON Shipment.OrderID = `Order`.OrderID
-                    WHERE `Order`.Status = "%s"
-                """
-            # Fetch filtered data
-            if status_filter == "All":
-                shipment_data = fetch_table_data(connection, query)
-            else:
-                shipment_data = fetch_table_data(connection, query % status_filter)
-
-            # Display results
-            if not shipment_data.empty:
-                st.dataframe(shipment_data, use_container_width=True)
-            else:
-                st.info("No shipments found for the selected status.")
-
+        
         elif main_menu == "Suppliers":
             st.header("Supplier Management")
             submenu = st.sidebar.radio("Options", ["View Suppliers", "Add Supplier", "Delete Supplier", "Modify Supplier"])
@@ -798,3 +1025,232 @@ def main():
 
 if __name__ == "__main__":
     main()
+# import streamlit as st
+# from langchain_groq import ChatGroq
+# import pandas as pd
+# import mysql.connector
+# from mysql.connector import Error
+
+# # Initialize the LLM
+# llm = ChatGroq(
+#     temperature=0,
+#     groq_api_key='your_groq_api_key',  # Replace with your actual API key
+#     model="llama-3.1-70b-versatile",
+# )
+
+# # CSS for colorful design
+# def add_styling():
+#     st.markdown(
+#         """
+#         <style>
+#         /* General background and text styles */
+#         body {
+#             background-color: #222831;
+#             color: #eeeeee;
+#             font-family: 'Arial', sans-serif;
+#         }
+#         .css-1fcdlh8, .css-1v3fvcr {
+#             background-color: #393e46;
+#             color: #eeeeee;
+#         }
+#         .stButton>button {
+#             background-color: #00adb5;
+#             color: white;
+#             border-radius: 5px;
+#             padding: 10px;
+#             font-weight: bold;
+#             border: none;
+#         }
+#         .stButton>button:hover {
+#             background-color: #028090;
+#             color: white;
+#         }
+#         .stTextArea>textarea {
+#             background-color: #393e46;
+#             color: white;
+#         }
+#         .stSelectbox>div>div>div {
+#             background-color: #00adb5 !important;
+#             color: white;
+#         }
+#         .css-15tx938 {
+#             background-color: #222831;
+#             border-radius: 5px;
+#             padding: 10px;
+#         }
+#         /* Sidebar styling */
+#         .css-1d391kg {
+#             background-color: #00adb5;
+#             color: white;
+#         }
+#         .css-1e5imcs, .css-1gk8nsv {
+#             color: white;
+#         }
+#         h1, h2, h3, h4, h5, h6 {
+#             color: #00adb5;
+#         }
+#         </style>
+#         """,
+#         unsafe_allow_html=True
+#     )
+
+# # Main application
+# def main():
+#     add_styling()  # Add custom styles
+#     st.title("🌟 Inventory Management System")
+
+#     # Connect to the database
+#     connection = connect_to_database()
+#     mongodb_connection = connect_to_mongodb() 
+
+#     if connection is not None and mongodb_connection is not None:
+#         # Sidebar menu
+#         st.sidebar.title("📋 Menu")
+#         main_menu = st.sidebar.selectbox(
+#             "Select Main Menu", ["Inventory", "Orders", "Discounts", "Shipments", "Suppliers", "Customer Insights", "Insights"]
+#         )
+
+#         # Manual Query Assistant
+#         st.sidebar.header("🧠 Manual Query Assistant")
+#         user_prompt = st.sidebar.text_area("🔍 Enter your query prompt", placeholder="Type your query here...")
+
+#         if user_prompt:
+#             try:
+#                 # Invoke the LLM
+#                 response = llm.invoke(user_prompt)
+#                 if response:
+#                     st.sidebar.success("✨ Generated Query:")
+#                     st.sidebar.code(response.content, language="sql")
+#                 else:
+#                     st.sidebar.warning("No response received from the model. Please try again.")
+#             except Exception as e:
+#                 st.sidebar.error(f"Error invoking the model: {e}")
+
+#         # Dashboard menu
+#         if main_menu == "Inventory":
+#             st.header("📦 Inventory")
+#             submenu = st.sidebar.radio("Options", ["View Inventory"])
+
+#             if submenu == "View Inventory":
+#                 query = """
+#                     SELECT 
+#                         Product.ProductName, 
+#                         Inventory.Quantity, 
+#                         Location.LocationName, 
+#                         Location.Address, 
+#                         Inventory.LastRestockDate
+#                     FROM Inventory
+#                     LEFT JOIN Product ON Inventory.ProductID = Product.ProductID
+#                     LEFT JOIN Location ON Inventory.LocationID = Location.LocationID
+#                 """
+#                 inventory_data = fetch_table_data(connection, query)
+#                 if not inventory_data.empty:
+#                     st.dataframe(inventory_data, use_container_width=True)
+#                 else:
+#                     st.info("No inventory records found.")
+
+#         elif main_menu == "Orders":
+#             st.header("📜 Orders")
+#             submenu = st.sidebar.radio("Options", ["Add Order", "Delete Order", "Check Stock Availability", "Track Order", "Modify Order"])
+
+#             if submenu == "Add Order":
+#                 add_order(connection)
+
+#             elif submenu == "Delete Order":
+#                 delete_order(connection, mongodb_connection)
+
+#             elif submenu == "Check Stock Availability":
+#                 st.header("📊 Check Stock Availability")
+#                 product_id = st.number_input("Enter Product ID", min_value=1, step=1)
+#                 required_quantity = st.number_input("Enter Required Quantity", min_value=1, step=1)
+
+#                 if st.button("Check Availability"):
+#                     query = """
+#                         SELECT 
+#                             Product.ProductName, 
+#                             Inventory.Quantity AS AvailableStock, 
+#                             Location.LocationName, 
+#                             Location.Address
+#                         FROM Inventory
+#                         LEFT JOIN Product ON Inventory.ProductID = Product.ProductID
+#                         LEFT JOIN Location ON Inventory.LocationID = Location.LocationID
+#                         WHERE Inventory.ProductID = %s
+#                     """
+#                     cursor = connection.cursor(dictionary=True)
+#                     cursor.execute(query, (product_id,))
+#                     stock_data = cursor.fetchall()
+
+#                     if stock_data:
+#                         stock_df = pd.DataFrame(stock_data)
+#                         total_stock = stock_df['AvailableStock'].sum()
+#                         sufficient_stock = total_stock >= required_quantity
+
+#                         st.write("📦 Stock Details:")
+#                         st.dataframe(stock_df)
+
+#                         st.write(f"Total Available Stock: **{total_stock}**")
+#                         if sufficient_stock:
+#                             st.success("✅ Sufficient stock is available.")
+#                         else:
+#                             st.error("❌ Insufficient stock.")
+#                     else:
+#                         st.warning("⚠️ Product not found in inventory.")
+
+#             elif submenu == "Track Order":
+#                 track_order(connection)
+
+#             elif submenu == "Modify Order":
+#                 modify_order(connection)
+
+#         elif main_menu == "Discounts":
+#             st.header("💸 Discounts")
+#             submenu = st.sidebar.radio("Options", ["View Discounts", "Modify Discount"])
+
+#             if submenu == "View Discounts":
+#                 query = """
+#                     SELECT 
+#                         Discount.DiscountID, 
+#                         Product.ProductName AS ProductName, 
+#                         Discount.DiscountPercent, 
+#                         Discount.StartDate, 
+#                         Discount.EndDate
+#                     FROM Discount
+#                     LEFT JOIN Product ON Discount.ProductID = Product.ProductID
+#                 """
+#                 discount_data = fetch_table_data(connection, query)
+#                 if not discount_data.empty:
+#                     st.dataframe(discount_data, use_container_width=True)
+#                 else:
+#                     st.info("No discounts available.")
+
+#         elif main_menu == "Suppliers":
+#             st.header("🏭 Supplier Management")
+#             submenu = st.sidebar.radio("Options", ["View Suppliers", "Add Supplier", "Delete Supplier", "Modify Supplier"])
+
+#             if submenu == "View Suppliers":
+#                 get_supplier_details(connection)
+
+#             elif submenu == "Add Supplier":
+#                 add_supplier(connection)
+
+#             elif submenu == "Delete Supplier":
+#                 delete_supplier(connection)
+
+#         elif main_menu == "Customer Insights":
+#             customer_insights(connection)
+
+#         elif main_menu == "Insights":
+#             dashboard_tab = st.sidebar.radio(
+#                 "Dashboard Insights",
+#                 ["Supplier Performance"]
+#             )
+#             if dashboard_tab == "Supplier Performance":
+#                 supplier_performance_dashboard(connection)
+
+#         connection.close()
+#     else:
+#         st.error("Unable to connect to the database.")
+
+
+# if __name__ == "__main__":
+#     main()
